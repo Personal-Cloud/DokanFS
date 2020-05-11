@@ -5,9 +5,12 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
+
 using DokanNet;
 using DokanNet.Logging;
+
 using static DokanNet.FormatProviders;
+
 using FileAccess = DokanNet.FileAccess;
 
 namespace DokanFS
@@ -65,7 +68,7 @@ namespace DokanFS
             return result;
         }
 
-#region Implementation of IDokanOperations
+        #region Implementation of IDokanOperations
 
         public NtStatus CreateFile(string fileName, FileAccess access, FileShare share, FileMode mode,
             FileOptions options, FileAttributes attributes, IDokanFileInfo info)
@@ -248,12 +251,13 @@ namespace DokanFS
                 }
                 catch (Exception ex)
                 {
-                    var hr = (uint)Marshal.GetHRForException(ex);
+                    var hr = (uint) Marshal.GetHRForException(ex);
                     switch (hr)
                     {
                         case 0x80070020: //Sharing violation
                             return Trace(nameof(CreateFile), fileName, info, access, share, mode, options, attributes,
                                 DokanResult.SharingViolation);
+
                         default:
                             throw;
                     }
@@ -540,7 +544,7 @@ namespace DokanFS
         {
             // dokan/setfile.c
             // It calls DokanOperations->SetEndOfFile() for SetAllocationSize()
-            
+
             if (_WriteableFileSystem == null)
             {
                 return Trace(nameof(SetAllocationSize), fileName, info, DokanResult.AccessDenied);
@@ -597,7 +601,7 @@ namespace DokanFS
             }
             catch
             {
-                volumeLabel = "Home Cloud";
+                volumeLabel = "Personal Cloud";
                 fileSystemName = "NTFS";
                 maximumComponentLength = 256;
 
@@ -662,6 +666,6 @@ namespace DokanFS
             return Trace(nameof(FindFilesWithPattern), fileName, info, DokanResult.Success);
         }
 
-#endregion Implementation of IDokanOperations
+        #endregion Implementation of IDokanOperations
     }
 }
