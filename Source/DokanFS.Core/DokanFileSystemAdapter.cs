@@ -13,6 +13,17 @@ using static DokanNet.FormatProviders;
 
 using FileAccess = DokanNet.FileAccess;
 
+/*
+ * Todo: Remove this section if all fixes to remove warnings are acknowledged and tested.
+ *
+ * 1. Made '_ReadableFileSystem' and '_WriteableFileSystem' properties.
+ *    (Previously fields.)
+ * 2. Added 'StringComparison.Ordinal' modifier on all culture-sensitive input comparisons.
+ * 3. Added 'CultureInfo.InvariantCulture' on all culture-sensitive outputs.
+ * 4. Added null-check on parameters that are not used with '?.' syntax.
+ *    (Previously they throw 'NullReferenceException'; now 'ArgumentNullException'.)
+ */
+
 namespace DokanFS
 {
     public class DokanFileSystemAdapter : IDokanOperations
@@ -26,15 +37,15 @@ namespace DokanFS
                                                    FileAccess.Delete |
                                                    FileAccess.GenericWrite;
 
-        private ConsoleLogger logger = new ConsoleLogger("[FS] ");
+        private readonly ConsoleLogger logger = new ConsoleLogger("[FS] ");
 
-        protected IReadableFileSystem _ReadableFileSystem;
-        protected IWriteableFileSystem _WriteableFileSystem;
+        protected IReadableFileSystem Readable { get; }
+        protected IWriteableFileSystem Writable { get; }
 
         public DokanFileSystemAdapter(IReadableFileSystem fileSystem)
         {
-            _ReadableFileSystem = fileSystem;
-            _WriteableFileSystem = fileSystem as IWriteableFileSystem;
+            Readable = fileSystem;
+            Writable = fileSystem as IWriteableFileSystem;
         }
 
         protected NtStatus Trace(string method, string fileName, IDokanFileInfo info, NtStatus result,
@@ -73,9 +84,12 @@ namespace DokanFS
         public NtStatus CreateFile(string fileName, FileAccess access, FileShare share, FileMode mode,
             FileOptions options, FileAttributes attributes, IDokanFileInfo info)
         {
+            if (fileName is null) throw new ArgumentNullException(nameof(fileName));
+            if (info is null) throw new ArgumentNullException(nameof(info));
+
             var result = DokanResult.Success;
 
-            if (fileName.EndsWith("*"))
+            if (fileName.EndsWith("*", StringComparison.Ordinal))
             {
                 fileName = fileName.TrimEnd('*', '/', '\\');
                 if (string.IsNullOrWhiteSpace(fileName))
@@ -87,7 +101,7 @@ namespace DokanFS
             {
                 try
                 {
-                    _ReadableFileSystem.CheckNodeExists(fileName, out bool isDirectory, out bool isFile);
+                    Readable.CheckNodeExists(fileName, out bool isDirectory, out bool isFile);
                     switch (mode)
                     {
                         case FileMode.Open:
@@ -107,20 +121,20 @@ namespace DokanFS
                                 return Trace(nameof(CreateFile), fileName, info, access, share, mode, options,
                                     attributes, DokanResult.NotADirectory);
                             }
-                            _WriteableFileSystem?.IsEmptyDirectory(fileName);
+                            Writable?.IsEmptyDirectory(fileName);
                             // you can't list the directory
                             break;
 
                         case FileMode.CreateNew:
                             // Result: FileExists, AlreadyExists
-                            if (_WriteableFileSystem != null)
+                            if (Writable != null)
                             {
                                 if (isDirectory || isFile)
                                 {
                                     return Trace(nameof(CreateFile), fileName, info, access, share, mode, options,
                                         attributes, DokanResult.AlreadyExists);
                                 }
-                                _WriteableFileSystem.CreateDirectory(fileName);
+                                Writable.CreateDirectory(fileName);
                             }
                             else
                             {
@@ -146,11 +160,11 @@ namespace DokanFS
 
                 try
                 {
-                    _ReadableFileSystem.CheckNodeExists(fileName, out bool isDirectory, out bool isFile);
+                    Readable.CheckNodeExists(fileName, out bool isDirectory, out bool isFile);
                     pathExists = (isDirectory || isFile);
                     pathIsDirectory = isDirectory;
                 }
-                catch// (IOException)
+                catch // (IOException)
                 {
                 }
 
@@ -208,14 +222,14 @@ namespace DokanFS
 
                 try
                 {
-                    info.Context = _ReadableFileSystem.CreateFileContext(fileName, mode, readAccess, share, options);
+                    info.Context = Readable.CreateFileContext(fileName, mode, readAccess, share, options);
 
                     if (pathExists && (mode == FileMode.OpenOrCreate || mode == FileMode.Create))
                     {
                         result = DokanResult.AlreadyExists;
                     }
 
-                    if (_WriteableFileSystem != null)
+                    if (Writable != null)
                     {
                         if (mode == FileMode.CreateNew || mode == FileMode.Create) // Files are always created as Archive
                         {
@@ -224,7 +238,7 @@ namespace DokanFS
 
                         try
                         {
-                            _WriteableFileSystem.SetFileAttributes(fileName, attributes);
+                            Writable.SetFileAttributes(fileName, attributes);
                         }
                         catch
                         {
@@ -238,7 +252,7 @@ namespace DokanFS
                     {
                         // returning AccessDenied cleanup and close won't be called,
                         // so we have to take care of them here
-                        _ReadableFileSystem.CloseFileContext(info.Context);
+                        Readable.CloseFileContext(info.Context);
                         info.Context = null;
                     }
                     return Trace(nameof(CreateFile), fileName, info, access, share, mode, options, attributes,
@@ -269,21 +283,23 @@ namespace DokanFS
 
         public void Cleanup(string fileName, IDokanFileInfo info)
         {
+            if (info is null) throw new ArgumentNullException(nameof(info));
+
             if (info.Context != null)
             {
-                _ReadableFileSystem.CloseFileContext(info.Context);
+                Readable.CloseFileContext(info.Context);
                 info.Context = null;
             }
 
-            if (info.DeleteOnClose && _WriteableFileSystem != null)
+            if (info.DeleteOnClose && Writable != null)
             {
                 if (info.IsDirectory)
                 {
-                    _WriteableFileSystem.DeleteDirectory(fileName);
+                    Writable.DeleteDirectory(fileName);
                 }
                 else
                 {
-                    _WriteableFileSystem.DeleteFile(fileName);
+                    Writable.DeleteFile(fileName);
                 }
             }
             Trace(nameof(Cleanup), fileName, info, DokanResult.Success);
@@ -291,9 +307,11 @@ namespace DokanFS
 
         public void CloseFile(string fileName, IDokanFileInfo info)
         {
+            if (info is null) throw new ArgumentNullException(nameof(info));
+
             if (info.Context != null)
             {
-                _ReadableFileSystem.CloseFileContext(info.Context);
+                Readable.CloseFileContext(info.Context);
                 info.Context = null;
             }
 
@@ -303,33 +321,37 @@ namespace DokanFS
 
         public NtStatus ReadFile(string fileName, byte[] buffer, out int bytesRead, long offset, IDokanFileInfo info)
         {
+            if (buffer is null) throw new ArgumentNullException(nameof(buffer));
+
             // info.Context == null, memory mapped read
             // info.Context != null, the context should be locked to protect from overlapped read
-            _ReadableFileSystem.ReadFile(fileName, offset, buffer.Length, buffer, out bytesRead);
-            return Trace(nameof(ReadFile), fileName, info, DokanResult.Success, "out " + bytesRead.ToString(),
+            Readable.ReadFile(fileName, offset, buffer.Length, buffer, out bytesRead);
+            return Trace(nameof(ReadFile), fileName, info, DokanResult.Success, "out " + bytesRead.ToString(CultureInfo.InvariantCulture),
                 offset.ToString(CultureInfo.InvariantCulture));
         }
 
         public NtStatus WriteFile(string fileName, byte[] buffer, out int bytesWritten, long offset, IDokanFileInfo info)
         {
             // info.Context != null, the context should be locked to protect from overlapped write
-            if (_WriteableFileSystem != null)
+            if (Writable != null)
             {
-                _WriteableFileSystem.WriteFile(fileName, buffer, out bytesWritten, offset);
-                return Trace(nameof(WriteFile), fileName, info, DokanResult.Success, "out " + bytesWritten.ToString(),
+                Writable.WriteFile(fileName, buffer, out bytesWritten, offset);
+                return Trace(nameof(WriteFile), fileName, info, DokanResult.Success, "out " + bytesWritten.ToString(CultureInfo.InvariantCulture),
                     offset.ToString(CultureInfo.InvariantCulture));
             }
             else
             {
                 bytesWritten = 0;
-                return Trace(nameof(WriteFile), fileName, info, DokanResult.AccessDenied, "out " + bytesWritten.ToString(),
+                return Trace(nameof(WriteFile), fileName, info, DokanResult.AccessDenied, "out " + bytesWritten.ToString(CultureInfo.InvariantCulture),
                     offset.ToString(CultureInfo.InvariantCulture));
             }
         }
 
         public NtStatus FlushFileBuffers(string fileName, IDokanFileInfo info)
         {
-            if (_WriteableFileSystem == null)
+            if (info is null) throw new ArgumentNullException(nameof(info));
+
+            if (Writable == null)
             {
                 return Trace(nameof(FlushFileBuffers), fileName, info, DokanResult.AccessDenied);
             }
@@ -338,7 +360,7 @@ namespace DokanFS
             {
                 if (info.Context != null)
                 {
-                    _WriteableFileSystem.FlushFileBuffers(info.Context);
+                    Writable.FlushFileBuffers(info.Context);
                 }
                 return Trace(nameof(FlushFileBuffers), fileName, info, DokanResult.Success);
             }
@@ -350,8 +372,11 @@ namespace DokanFS
 
         public NtStatus GetFileInformation(string fileName, out FileInformation fileInfo, IDokanFileInfo info)
         {
+            if (fileName is null) throw new ArgumentNullException(nameof(fileName));
+            if (info is null) throw new ArgumentNullException(nameof(info));
+
             // may be called with info.Context == null, but usually it isn't
-            if (fileName.EndsWith("*"))
+            if (fileName.EndsWith("*", StringComparison.Ordinal))
             {
                 fileName = fileName.TrimEnd('*', '/', '\\');
                 if (string.IsNullOrWhiteSpace(fileName))
@@ -360,7 +385,7 @@ namespace DokanFS
                 }
             }
             info.TryResetTimeout(60000);
-            _ReadableFileSystem.GetFileInformation(fileName, out fileInfo);
+            Readable.GetFileInformation(fileName, out fileInfo);
             return Trace(nameof(GetFileInformation), fileName, info, DokanResult.Success);
         }
 
@@ -374,7 +399,7 @@ namespace DokanFS
 
         public NtStatus SetFileAttributes(string fileName, FileAttributes attributes, IDokanFileInfo info)
         {
-            if (_WriteableFileSystem == null)
+            if (Writable == null)
             {
                 return Trace(nameof(SetFileAttributes), fileName, info, DokanResult.AccessDenied, attributes.ToString());
             }
@@ -385,7 +410,7 @@ namespace DokanFS
                 // because a value of 0x00000000 in the FileAttributes field means that the file attributes for this file MUST NOT be changed when setting basic information for the file
                 if (attributes != 0)
                 {
-                    _WriteableFileSystem.SetFileAttributes(fileName, attributes);
+                    Writable.SetFileAttributes(fileName, attributes);
                 }
                 return Trace(nameof(SetFileAttributes), fileName, info, DokanResult.Success, attributes.ToString());
             }
@@ -406,7 +431,7 @@ namespace DokanFS
         public NtStatus SetFileTime(string fileName, DateTime? creationTime, DateTime? lastAccessTime,
             DateTime? lastWriteTime, IDokanFileInfo info)
         {
-            if (_WriteableFileSystem == null)
+            if (Writable == null)
             {
                 return Trace(nameof(SetFileTime), fileName, info, DokanResult.AccessDenied, creationTime, lastAccessTime,
                     lastWriteTime);
@@ -414,7 +439,7 @@ namespace DokanFS
 
             try
             {
-                _WriteableFileSystem.SetFileTime(fileName, creationTime, lastAccessTime, lastWriteTime);
+                Writable.SetFileTime(fileName, creationTime, lastAccessTime, lastWriteTime);
                 return Trace(nameof(SetFileTime), fileName, info, DokanResult.Success, creationTime, lastAccessTime,
                     lastWriteTime);
             }
@@ -432,12 +457,12 @@ namespace DokanFS
 
         public NtStatus DeleteFile(string fileName, IDokanFileInfo info)
         {
-            if (_WriteableFileSystem == null)
+            if (Writable == null)
             {
                 return Trace(nameof(DeleteFile), fileName, info, DokanResult.AccessDenied);
             }
 
-            _ReadableFileSystem.CheckNodeExists(fileName, out bool isDirectory, out bool isFile);
+            Readable.CheckNodeExists(fileName, out bool isDirectory, out bool isFile);
             if (isFile && !isDirectory)
             {
                 return Trace(nameof(DeleteFile), fileName, info, DokanResult.Success);
@@ -454,31 +479,33 @@ namespace DokanFS
 
         public NtStatus DeleteDirectory(string fileName, IDokanFileInfo info)
         {
-            if (_WriteableFileSystem == null)
+            if (Writable == null)
             {
                 return Trace(nameof(DeleteDirectory), fileName, info, DokanResult.AccessDenied);
             }
 
-            var isEmptyDirectory = _WriteableFileSystem.IsEmptyDirectory(fileName);
+            var isEmptyDirectory = Writable.IsEmptyDirectory(fileName);
             return Trace(nameof(DeleteDirectory), fileName, info,
                 isEmptyDirectory ? DokanResult.Success : DokanResult.DirectoryNotEmpty);
         }
 
         public NtStatus MoveFile(string oldName, string newName, bool replace, IDokanFileInfo info)
         {
-            if (_WriteableFileSystem == null)
+            if (info is null) throw new ArgumentNullException(nameof(info));
+
+            if (Writable == null)
             {
                 return Trace(nameof(MoveFile), oldName, info, DokanResult.AccessDenied);
             }
 
             if (info.Context != null)
             {
-                _ReadableFileSystem.CloseFileContext(info.Context);
+                Readable.CloseFileContext(info.Context);
                 info.Context = null;
             }
 
-            _ReadableFileSystem.CheckNodeExists(oldName, out bool isDirectory_OldName, out bool isFile_OldName);
-            _ReadableFileSystem.CheckNodeExists(newName, out bool isDirectory_NewName, out bool isFile_NewName);
+            Readable.CheckNodeExists(oldName, out bool isDirectory_OldName, out bool isFile_OldName);
+            Readable.CheckNodeExists(newName, out bool isDirectory_NewName, out bool isFile_NewName);
 
             try
             {
@@ -486,13 +513,13 @@ namespace DokanFS
                 {
                     if (isDirectory_OldName && !isFile_OldName)
                     {
-                        _WriteableFileSystem.MoveDirectory(oldName, newName);
+                        Writable.MoveDirectory(oldName, newName);
                         return Trace(nameof(MoveFile), oldName, info, DokanResult.Success, newName,
                             replace.ToString(CultureInfo.InvariantCulture));
                     }
                     else if (!isDirectory_OldName && isFile_OldName)
                     {
-                        _WriteableFileSystem.MoveFile(oldName, newName);
+                        Writable.MoveFile(oldName, newName);
                         return Trace(nameof(MoveFile), oldName, info, DokanResult.Success, newName,
                             replace.ToString(CultureInfo.InvariantCulture));
                     }
@@ -505,8 +532,8 @@ namespace DokanFS
                             replace.ToString(CultureInfo.InvariantCulture));
                     }
 
-                    _WriteableFileSystem.DeleteFile(newName);
-                    _WriteableFileSystem.MoveFile(oldName, newName);
+                    Writable.DeleteFile(newName);
+                    Writable.MoveFile(oldName, newName);
                     return Trace(nameof(MoveFile), oldName, info, DokanResult.Success, newName,
                         replace.ToString(CultureInfo.InvariantCulture));
                 }
@@ -522,14 +549,14 @@ namespace DokanFS
 
         public NtStatus SetEndOfFile(string fileName, long length, IDokanFileInfo info)
         {
-            if (_WriteableFileSystem == null)
+            if (Writable == null)
             {
                 return Trace(nameof(SetEndOfFile), fileName, info, DokanResult.AccessDenied);
             }
 
             try
             {
-                _WriteableFileSystem.SetFileLength(fileName, length);
+                Writable.SetFileLength(fileName, length);
                 return Trace(nameof(SetEndOfFile), fileName, info, DokanResult.Success,
                     length.ToString(CultureInfo.InvariantCulture));
             }
@@ -545,14 +572,14 @@ namespace DokanFS
             // dokan/setfile.c
             // It calls DokanOperations->SetEndOfFile() for SetAllocationSize()
 
-            if (_WriteableFileSystem == null)
+            if (Writable == null)
             {
                 return Trace(nameof(SetAllocationSize), fileName, info, DokanResult.AccessDenied);
             }
 
             try
             {
-                _WriteableFileSystem.SetFileLength(fileName, length);
+                Writable.SetFileLength(fileName, length);
                 return Trace(nameof(SetAllocationSize), fileName, info, DokanResult.Success,
                     length.ToString(CultureInfo.InvariantCulture));
             }
@@ -577,9 +604,9 @@ namespace DokanFS
         {
             try
             {
-                _ReadableFileSystem.GetDiskFreeSpace(out freeBytesAvailable, out totalNumberOfBytes, out totalNumberOfFreeBytes);
-                return Trace(nameof(GetDiskFreeSpace), null, info, DokanResult.Success, "out " + freeBytesAvailable.ToString(),
-                    "out " + totalNumberOfBytes.ToString(), "out " + totalNumberOfFreeBytes.ToString());
+                Readable.GetDiskFreeSpace(out freeBytesAvailable, out totalNumberOfBytes, out totalNumberOfFreeBytes);
+                return Trace(nameof(GetDiskFreeSpace), null, info, DokanResult.Success, "out " + freeBytesAvailable.ToString(CultureInfo.InvariantCulture),
+                    "out " + totalNumberOfBytes.ToString(CultureInfo.InvariantCulture), "out " + totalNumberOfFreeBytes.ToString(CultureInfo.InvariantCulture));
             }
             catch
             {
@@ -595,7 +622,7 @@ namespace DokanFS
         {
             try
             {
-                _ReadableFileSystem.GetVolumeInformation(out volumeLabel, out features, out fileSystemName, out maximumComponentLength);
+                Readable.GetVolumeInformation(out volumeLabel, out features, out fileSystemName, out maximumComponentLength);
                 return Trace(nameof(GetVolumeInformation), null, info, DokanResult.Success, "out " + volumeLabel,
                     "out " + features.ToString(), "out " + fileSystemName);
             }
@@ -643,24 +670,26 @@ namespace DokanFS
             streamName = string.Empty;
             streamSize = 0;
             return Trace(nameof(FindStreams), fileName, info, DokanResult.NotImplemented, enumContext.ToString(),
-                "out " + streamName, "out " + streamSize.ToString());
+                "out " + streamName, "out " + streamSize.ToString(CultureInfo.InvariantCulture));
         }
 
         public NtStatus FindStreams(string fileName, out IList<FileInformation> streams, IDokanFileInfo info)
         {
-            streams = new FileInformation[0];
+            streams = Array.Empty<FileInformation>();
             return Trace(nameof(FindStreams), fileName, info, DokanResult.NotImplemented);
         }
 
         public IList<FileInformation> FindFilesHelper(string fileName, string searchPattern)
         {
-            IList<FileInformation> files = _ReadableFileSystem.EnumerateChildren(fileName, searchPattern);
+            IList<FileInformation> files = Readable.EnumerateChildren(fileName, searchPattern);
             return files;
         }
 
         public NtStatus FindFilesWithPattern(string fileName, string searchPattern, out IList<FileInformation> files,
             IDokanFileInfo info)
         {
+            if (info is null) throw new ArgumentNullException(nameof(info));
+
             info.TryResetTimeout(60000);
             files = FindFilesHelper(fileName, searchPattern);
             return Trace(nameof(FindFilesWithPattern), fileName, info, DokanResult.Success);
