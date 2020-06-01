@@ -360,8 +360,17 @@ namespace DokanFS
                 }
             }
             info.TryResetTimeout(60000);
-            _ReadableFileSystem.GetFileInformation(fileName, out fileInfo);
-            return Trace(nameof(GetFileInformation), fileName, info, DokanResult.Success);
+            _ReadableFileSystem.GetFileInformation(fileName, out var fileInfo2);
+            if (fileInfo2 != null)
+            {
+                fileInfo = (FileInformation)fileInfo2;
+                return Trace(nameof(GetFileInformation), fileName, info, DokanResult.Success);
+            }
+            else
+            {
+                fileInfo = default;
+                return Trace(nameof(GetFileInformation), fileName, info, DokanResult.PathNotFound);
+            }
         }
 
         public NtStatus FindFiles(string fileName, out IList<FileInformation> files, IDokanFileInfo info)

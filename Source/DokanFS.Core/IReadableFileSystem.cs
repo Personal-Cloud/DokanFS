@@ -23,7 +23,7 @@ namespace DokanFS
         void CheckNodeExists(string filePath, out bool isDirectory, out bool isFile);
 
         IList<FileInformation> EnumerateChildren(string filePath, string searchPattern);
-        void GetFileInformation(string fileName, out FileInformation fileInfo);
+        void GetFileInformation(string fileName, out FileInformation? fileInfo);
 
         void ReadFile(string fileName, long offset, int length, byte[] buffer, out int bytesRead);
     }
