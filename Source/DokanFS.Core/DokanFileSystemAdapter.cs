@@ -611,6 +611,7 @@ namespace DokanFS
             catch
             {
                 volumeLabel = "Personal Cloud";
+                volumeLabel = "Personal House";
                 fileSystemName = "NTFS";
                 maximumComponentLength = 256;
 
